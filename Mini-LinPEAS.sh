@@ -1,134 +1,154 @@
 #!/bin/bash
 
 # ==============================================================================
-#  Mini-LinPeas: Lightweight Privilege Escalation Enumerator
-#  Author: Gemini
-#  Description: Enumerates SUID, Capabilities, Sudo -l, and System Info
+#  Custom-LinPEAS: Context-Aware Privilege Escalation Enumerator
+#  Based on vectors from: Broker, CozyHosting, Builder, Busqueda, Dog, BoardLight
 # ==============================================================================
 
 # --- Color Definitions ---
-# Using ANSI escape codes for coloring output similar to LinPEAS
 C_RESET='\033[0m'
-C_RED='\033[1;31m'
-C_GREEN='\033[1;32m'
-C_YELLOW='\033[1;33m'
-C_BLUE='\033[1;34m'
-C_MAGENTA='\033[1;35m'
-C_CYAN='\033[1;36m'
-C_BG_RED='\033[41m\033[1;37m' # White text on Red background for Critical
-
-# --- Helper Functions ---
+C_RED='\033[1;31m'      # Danger/Critical
+C_GREEN='\033[1;32m'    # Good/Safe
+C_YELLOW='\033[1;33m'   # Section Header
+C_BLUE='\033[1;34m'     # Info
+C_BOLD='\033[1m'
 
 print_banner() {
     echo -e "${C_GREEN}"
-    echo "  _     _       ____  _____" 
-    echo " | |   (_)_ __ |  _ \| ____|  Mini-LinPEAS"
-    echo " | |   | | '_ \| |_) |  _|    Privilege Escalation Checker"
-    echo " | |___| | | | |  __/| |___   Fast & Formatted"
-    echo " |_____|_|_| |_|_|   |_____|  "
+    echo "   ____            _                    "
+    echo "  / ___|   _ ___| |_ ___  _ __ ___    "
+    echo " | |  | | | / __| __/ _ \| '_ \` _ \   "
+    echo " | |__| |_| \__ \ || (_) | | | | | |  "
+    echo "  \____\__,_|___/\__\___/|_| |_| |_|  "
+    echo "  Context-Aware Privilege Escalation  "
     echo -e "${C_RESET}"
 }
 
 print_section() {
-    echo -e "\n${C_YELLOW}═════════════════════════════════════════════════════════════════════════════${C_RESET}"
-    echo -e "${C_BLUE}[+] $1 ${C_RESET}"
-    echo -e "${C_YELLOW}═════════════════════════════════════════════════════════════════════════════${C_RESET}"
-}
-
-print_info() {
-    echo -e "${C_CYAN}[i]${C_RESET} $1"
-}
-
-print_good() {
-    echo -e "${C_GREEN}[+]${C_RESET} $1"
-}
-
-print_bad() {
-    echo -e "${C_RED}[!]${C_RESET} $1"
+    echo -e "\n${C_YELLOW}════════════════════════════════════════════════════════════════${C_RESET}"
+    echo -e "${C_YELLOW}[+] $1 ${C_RESET}"
+    echo -e "${C_YELLOW}════════════════════════════════════════════════════════════════${C_RESET}"
 }
 
 check_command() {
-    if ! command -v "$1" &> /dev/null; then
-        echo -e "${C_RED}[!] Command '$1' not found on this system.${C_RESET}"
-        return 1
-    fi
-    return 0
+    command -v "$1" &> /dev/null
 }
 
 # ==============================================================================
-#  MAIN EXECUTION
+#  1. BASIC SYSTEM & USER INFO
+#  Relevant to: All (Kernel exploits, group membership)
 # ==============================================================================
-
 print_banner
+print_section "System Information"
+echo -e "${C_BLUE}Hostname:${C_RESET} $(hostname)"
+echo -e "${C_BLUE}OS Release:${C_RESET} $(cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"')"
+echo -e "${C_BLUE}Kernel:${C_RESET} $(uname -a)"
+echo -e "${C_BLUE}Current User:${C_RESET} $(id)"
+echo -e "${C_BLUE}Path:${C_RESET} $PATH"
 
-# --- 1. Basic System Information ---
-print_section "Basic System Information"
-echo -e "${C_MAGENTA}Hostname:${C_RESET} $(hostname)"
-echo -e "${C_MAGENTA}OS:${C_RESET} $(cat /etc/issue 2>/dev/null | cut -d'\\' -f1 | tr -d '\n')"
-echo -e "${C_MAGENTA}Kernel:${C_RESET} $(uname -a)"
-echo -e "${C_MAGENTA}Current User:${C_RESET} $(id)"
-
-# --- 2. Sudo Permissions (sudo -l) ---
+# ==============================================================================
+#  2. SUDO PERMISSIONS (The #1 Vector)
+#  Relevant to: Broker, CozyHosting, Busqueda, Dog
+# ==============================================================================
 print_section "Sudo Permissions (sudo -l)"
-print_info "Checking if user can run anything as root without password..."
-
 if check_command "sudo"; then
-    # We try to run sudo -l. If it asks for a password, it might hang or fail.
-    # This attempts to run it non-interactively.
+    echo -e "${C_BLUE}[i] Attempting listing (passwordless)...${C_RESET}"
     SUDO_OUT=$(sudo -n -l 2>/dev/null)
     if [ $? -eq 0 ]; then
-        echo -e "$SUDO_OUT" | grep -v "User" --color=always
-        echo -e "\n${C_GREEN}>> Check GTFOBins for any binaries listed above!${C_RESET}"
+        echo -e "${C_RED}$SUDO_OUT${C_RESET}"
+        echo -e "\n${C_GREEN}>> CHECK GTFOBINS for the binaries listed above!${C_RESET}"
+        
+        # Specific check for LD_PRELOAD or ProxyCommand vectors (CozyHosting)
+        if echo "$SUDO_OUT" | grep -q "ssh"; then
+             echo -e "${C_RED}[!] SSH found in sudoers. Check GTFOBins for ProxyCommand exploit (Refer to CozyHosting).${C_RESET}"
+        fi
     else
-        echo -e "${C_RED}User cannot run sudo without password or sudo requires interaction.${C_RESET}"
+        echo -e "${C_YELLOW}[!] User cannot run sudo without password or root interaction required.${C_RESET}"
     fi
+else
+    echo "sudo command not found."
 fi
 
-# --- 3. SUID Bit Set Files ---
-print_section "SUID Files (Potential Vectors)"
-print_info "Searching for binaries with the SUID bit set..."
-# Find files with SUID bit, ignore error messages
-find / -perm -u=s -type f 2>/dev/null | while read -r file; do
-    # Highlight known dangerous binaries in RED
-    if [[ "$file" =~ (nmap|vim|nano|find|bash|awk|cp|less|more|man|wget|curl|python|perl|ruby|lua|php|tar) ]]; then
-        echo -e "${C_RED}$file${C_RESET} ${C_YELLOW}<-- INTERESTING!${C_RESET}"
+# ==============================================================================
+#  3. SUID & GUID FILES
+#  Relevant to: BoardLight (Enlightenment exploit), Busqueda (Custom scripts)
+# ==============================================================================
+print_section "SUID Binary Enumeration"
+echo -e "${C_BLUE}[i] Searching for SUID bits...${C_RESET}"
+# Find files with SUID, ignore errors, filter out common noise
+find / -perm -4000 -type f 2>/dev/null | grep -v -E "snap|/proc|/sys" | while read -r file; do
+    # Highlight known dangerous binaries often used in GTFOBins
+    if [[ "$file" =~ (nmap|vim|nano|find|bash|awk|cp|less|more|man|wget|curl|python|perl|ruby|lua|php|tar|enlightenment|pkexec|polkit) ]]; then
+        echo -e "${C_RED}$file${C_RESET} ${C_BOLD}<-- CRITICAL (Potential GTFOBin or CVE)${C_RESET}"
     else
-        echo -e "$file"
+        echo "$file"
     fi
 done
 
-# --- 4. File Capabilities ---
+# ==============================================================================
+#  4. FILE CAPABILITIES
+#  Standard enumeration
+# ==============================================================================
 print_section "File Capabilities"
-print_info "Searching for files with capabilities set (getcap)..."
 if check_command "getcap"; then
-    getcap -r / 2>/dev/null | while read -r line; do
-        # Highlight interesting capabilities
-        if [[ "$line" =~ (cap_setuid|cap_dac_read_search|cap_sys_admin) ]]; then
-             echo -e "${C_RED}$line${C_RESET} ${C_YELLOW}<-- DANGEROUS CAPABILITY!${C_RESET}"
-        else
-            echo "$line"
-        fi
-    done
+    getcap -r / 2>/dev/null | grep -v "snap"
 else
-    print_bad "getcap is not installed. Skipping capabilities check."
+    echo "getcap not found."
 fi
 
-# --- 5. Cron Jobs ---
-print_section "Cron Jobs"
-print_info "Listing /etc/crontab and /etc/cron.d contents..."
-if [ -f /etc/crontab ]; then
-    echo -e "${C_MAGENTA}--- /etc/crontab ---${C_RESET}"
-    cat /etc/crontab
+# ==============================================================================
+#  5. STORED CREDENTIALS & APP CONFIGS
+#  Relevant to: Builder (Jenkins), Dog (CMS), CozyHosting (Spring), Busqueda (Git)
+# ==============================================================================
+print_section "Interesting Config Files & Credentials"
+
+# Check for Jenkins (Builder)
+if [ -d "/var/jenkins_home" ] || [ -d "/var/lib/jenkins" ]; then
+    echo -e "${C_RED}[!] Jenkins Directory Found! Check users.xml and credentials.xml${C_RESET}"
+    find /var/jenkins_home /var/lib/jenkins -name "*.xml" 2>/dev/null | grep "users"
 fi
 
-echo -e "\n${C_MAGENTA}--- /etc/cron.d/ ---${C_RESET}"
-ls -la /etc/cron.d/ 2>/dev/null
+# Check for Spring Boot / Java Properties (CozyHosting)
+echo -e "${C_BLUE}[i] Searching for application.properties (Spring Boot/Java)...${C_RESET}"
+find /opt /var/www /home -name "application.properties" 2>/dev/null | while read -r file; do
+    echo -e "${C_RED}[!] Found Spring Config: $file${C_RESET}"
+    grep -i "password" "$file" --color=always
+done
 
-# --- 6. World Writable Files (High Value) ---
-print_section "World Writable Files (Filtered)"
-print_info "Checking for world-writable files in sensitive directories (/etc, /usr)..."
-find /etc /usr -type f -not -path '*/proc/*' -perm -0002 -exec ls -l {} \; 2>/dev/null | head -n 20
-echo -e "${C_CYAN}... (Output truncated to top 20)${C_RESET}"
+# Check for PHP Configs / CMS (Dog, BoardLight)
+echo -e "${C_BLUE}[i] Searching for PHP settings/config files...${C_RESET}"
+find /var/www /home -name "*settings.php" -o -name "conf.php" -o -name "config.php" 2>/dev/null | while read -r file; do
+    echo -e "${C_YELLOW}[*] Potential CMS Config: $file${C_RESET}"
+    # Just show the line with 'pass' to be safe, don't cat whole file
+    grep -i "pass" "$file" | head -n 5
+done
 
-print_section "Scan Complete"
-echo -e "${C_GREEN}Enumeration finished.${C_RESET}"
+# Check for Git Credentials (Busqueda)
+echo -e "${C_BLUE}[i] Searching for .git config files...${C_RESET}"
+find /var/www /home /opt -name "config" 2>/dev/null | grep ".git/config" | while read -r file; do
+    echo -e "${C_YELLOW}[*] Git Config found: $file${C_RESET}"
+    grep "url =" "$file" # Often contains http://user:pass@domain
+done
+
+# ==============================================================================
+#  6. CUSTOM SCRIPTS & OPT DIRECTORY
+#  Relevant to: Busqueda (Python script hijacking), Dog (Bee script)
+# ==============================================================================
+print_section "Custom Scripts & /opt Enumeration"
+echo -e "${C_BLUE}[i] Listing contents of /opt (common location for CTF scripts)...${C_RESET}"
+ls -laR /opt 2>/dev/null
+
+echo -e "\n${C_BLUE}[i] Checking for writable files in /usr/local/bin or /opt...${C_RESET}"
+find /usr/local/bin /opt -writable -type f 2>/dev/null
+
+# ==============================================================================
+#  7. INTERNAL PORTS (Listening)
+#  Relevant to: Broker (ActiveMQ localhost), BoardLight (MySQL localhost)
+# ==============================================================================
+print_section "Internal Listening Ports"
+# Quick check for ports listening on localhost that aren't exposed externally
+if check_command "ss"; then
+    ss -tulpn | grep "127.0.0.1"
+elif check_command "netstat"; then
+    netstat -tulpn | grep "127.0.0.1"
+fi
