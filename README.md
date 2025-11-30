@@ -17,7 +17,7 @@ File Capabilities: Lists getcap results to identify binaries with elevated privi
 Since this is a single Bash script, you can run it directly on the target machine.
 Method 1: The "CTF" Way (Host and Curl)
 On your attack machine:
-# Start a python server in the directory containing the script
+### Start a python server in the directory containing the script
 python3 -m http.server 8000
 
 
